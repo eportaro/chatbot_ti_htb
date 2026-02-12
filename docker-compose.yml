@@ -1,0 +1,25 @@
+services:
+  chatbot_ti_api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: chabotti-chatbot_ti_api:latest
+    container_name: chatbot_ti_api
+    environment:
+      - PORT=8000
+      - CORS_ORIGIN=*
+      - SQLITE_PATH=/app/data/chatbot.db
+      - SQLITE_JOURNAL_MODE=DELETE
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ASSISTANT_ID=${ASSISTANT_ID}
+      # Opcional:
+      # - SMTP_HELPDESK_TO=ithelpdesk@hermes.com.pe
+      # - SMTP_TO=tu_correo@dominio.com
+    volumes:
+      - db-data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  db-data:

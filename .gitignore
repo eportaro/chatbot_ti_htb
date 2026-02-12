@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.env.prod
+chatbot.db
+chatbot-ti-api_prod.tar
+.vscode/
+data/
+venv/
+.idea/
+*.log

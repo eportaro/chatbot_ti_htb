@@ -1,0 +1,30 @@
+FROM python:3.11-slim-bookworm
+
+# Evita .pyc y asegura flush de stdout
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Fix PyPI (útil en redes/proxy corporativos)
+RUN printf "[global]\ntrusted-host = pypi.org\n\tfiles.pythonhosted.org\nindex-url = https://pypi.org/simple\n" > /etc/pip.conf
+ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" \
+    PIP_INDEX_URL="https://pypi.org/simple"
+
+# Dependencias Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Código
+COPY . .
+
+# Usuario no root + carpeta de datos
+RUN useradd -m appuser && mkdir -p /app/data && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+ENV PORT=8000
+ENV SQLITE_PATH=/app/data/chatbot.db
+ENV SQLITE_JOURNAL_MODE=DELETE
+
+CMD ["python", "app_openai.py"]
