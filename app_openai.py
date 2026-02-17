@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from pydantic import BaseModel
 
 from itop_client import create_ticket, get_userrequest_by_ref
 from email_utils import enviar_correo
@@ -87,6 +88,20 @@ def _db_touch_session(session_id: str):
         VALUES(?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET updated_ts=excluded.updated_ts
         """, (session_id, t, t))
+
+class QuestionRequest(BaseModel):
+    question: str
+    session_id: str | None = None
+    image: str | None = None  # Base64 string
+
+class TicketRequest(BaseModel):
+    session_id: str
+    title: str
+    description: str
+    caller_id: str
+    caller_email: str
+    urgency: str
+    impact: str
 
 def _db_append_message(session_id: str, role: str, content: str, ts: int | None = None):
     t = ts or _now()
@@ -182,8 +197,9 @@ async def api_ask(req: Request):
 
     sid = body.get("session_id") or str(uuid.uuid4())
     q = (body.get("question") or "").strip()
-    if not q:
-        return JSONResponse({"error": "Pregunta vacía"}, status_code=400)
+    img = body.get("image")  # Base64 string optional
+    if not q and not img:
+        return JSONResponse({"error": "Pregunta o imagen vacía"}, status_code=400)
 
     _gc_sessions()
     state = _get_or_load_session(sid)
@@ -245,7 +261,8 @@ async def api_ask(req: Request):
                 combined, 
                 hist_for_model, 
                 allow_greeting=allow_greeting,
-                session_id=sid
+                session_id=sid,
+                image_base64=img
             )
 
             ats = _now()

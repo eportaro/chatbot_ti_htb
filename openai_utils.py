@@ -152,7 +152,7 @@ def _get_or_create_thread(session_id: str):
     return thread.id
 
 
-def ask_openai(question: str, history: list | None = None, allow_greeting: bool = True, session_id: str = None) -> str:
+def ask_openai(question: str, history: list | None = None, allow_greeting: bool = True, session_id: str = None, image_base64: str = None) -> str:
     """
     OPTIMIZADO: Reutiliza thread por sesión para respuestas más rápidas.
     Args:
@@ -160,8 +160,9 @@ def ask_openai(question: str, history: list | None = None, allow_greeting: bool 
         history: Historial (no se usa para crear thread; contexto persistente vive en el thread)
         allow_greeting: Permite saludos
         session_id: ID de sesión para reutilizar thread
+        image_base64: Imagen en base64 (data URI)
     """
-    if allow_greeting and is_pure_greeting(question):
+    if allow_greeting and is_pure_greeting(question) and not image_base64:
         return "¡Hola! 😊 Soy el asistente de soporte TI de Hermes. ¿En qué puedo ayudarte?"
 
     if _HELPDESK_Q.search(question):
@@ -179,19 +180,46 @@ def ask_openai(question: str, history: list | None = None, allow_greeting: bool 
         thread = client.beta.threads.create()
         thread_id = thread.id
 
-    # Agregar solo el mensaje nuevo (el historial ya está en el thread si lo has ido usando)
+    # Construir contenido (solo texto — imágenes requieren Chat Completions API, ver nota abajo)
+    if image_base64:
+        # Las imágenes no son compatibles con Assistants API threads de forma estable.
+        # Se ignora la imagen y se informa al usuario.
+        print("[INFO] Imagen recibida pero no soportada por Assistants API threads. Ignorando imagen.")
+
+    # Agregar solo el mensaje de texto
     client.beta.threads.messages.create(
         thread_id=thread_id,
         role="user",
-        content=question
+        content=question or "Hola"
     )
 
-    # Ejecutar assistant run
-    run = client.beta.threads.runs.create(
-        thread_id=thread_id,
-        assistant_id=assistant_id
-    )
-    _wait_run_ok(client, thread_id, run.id, timeout_s=int(os.getenv("ASSISTANTS_RUN_TIMEOUT_SECS", "90")))
+    # Ejecutar assistant run (con recuperación de thread corrupto)
+    try:
+        run = client.beta.threads.runs.create(
+            thread_id=thread_id,
+            assistant_id=assistant_id
+        )
+        _wait_run_ok(client, thread_id, run.id, timeout_s=int(os.getenv("ASSISTANTS_RUN_TIMEOUT_SECS", "90")))
+    except (RuntimeError, TimeoutError) as e:
+        # Thread puede estar corrupto — crear uno nuevo y reintentar
+        print(f"[WARN] Thread {thread_id} falló ({e}). Creando thread nuevo...")
+        clear_thread_cache(session_id)
+        thread = client.beta.threads.create()
+        thread_id = thread.id
+        if session_id:
+            _thread_cache[session_id] = thread_id
+        
+        # Agregar mensaje al thread nuevo
+        client.beta.threads.messages.create(
+            thread_id=thread_id,
+            role="user",
+            content=question or "Hola"
+        )
+        run = client.beta.threads.runs.create(
+            thread_id=thread_id,
+            assistant_id=assistant_id
+        )
+        _wait_run_ok(client, thread_id, run.id, timeout_s=int(os.getenv("ASSISTANTS_RUN_TIMEOUT_SECS", "90")))
 
     # Obtener respuesta más reciente del asistente (no del usuario)
     messages = client.beta.threads.messages.list(thread_id=thread_id, order="desc", limit=5)
@@ -200,7 +228,7 @@ def ask_openai(question: str, history: list | None = None, allow_greeting: bool 
     if not assistant_msg:
         return (
             "No pude generar una respuesta en este momento. "
-            "¿Deseas que lo derive al Helpdesk o que cree un ticket en iTop?\n" + HELPDESK_CONTACTO
+            "Si necesitas ayuda, puedes generar un ticket haciendo clic en el botón **Crear Ticket iTop** en la parte inferior del chat.\n" + HELPDESK_CONTACTO
         )
 
     chunks = []
@@ -214,7 +242,7 @@ def ask_openai(question: str, history: list | None = None, allow_greeting: bool 
     if not answer or len(answer) < 5:
         return (
             "No pude generar una respuesta útil. "
-            "¿Deseas que lo derive al Helpdesk o que cree un ticket en iTop?\n" + HELPDESK_CONTACTO
+            "Si necesitas ayuda, puedes generar un ticket haciendo clic en el botón **Crear Ticket iTop** en la parte inferior del chat.\n" + HELPDESK_CONTACTO
         )
 
     return answer
